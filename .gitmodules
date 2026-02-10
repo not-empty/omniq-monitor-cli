@@ -1,0 +1,3 @@
+[submodule "omniq"]
+	path = omniq
+	url = git@github.com:not-empty/omniq.git

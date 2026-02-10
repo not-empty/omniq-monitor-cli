@@ -1,0 +1,6 @@
+redis_url = "redis://localhost:6379"
+interval_s = 0.5
+groups_n = 5
+group_prefix = "g"
+auto_discover = true
+discover_limit = 200
