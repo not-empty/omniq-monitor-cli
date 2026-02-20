@@ -4,11 +4,13 @@ import (
 	"context"
 	"time"
 
+	"github.com/not-empty/omniq-go"
 	"github.com/redis/go-redis/v9"
 )
 
 type Client struct {
-	rdb *redis.Client
+	rdb         *redis.Client
+	OmniqClient *omniq.Client
 }
 
 func NewClient(redisURL string) (*Client, error) {
@@ -25,7 +27,15 @@ func NewClient(redisURL string) (*Client, error) {
 		return nil, err
 	}
 
-	return &Client{rdb: rdb}, nil
+	omniqClient, err := omniq.NewClient(omniq.ClientOpts{
+		RedisURL: redisURL,
+	})
+	if err != nil {
+		rdb.Close()
+		return nil, err
+	}
+
+	return &Client{rdb: rdb, OmniqClient: omniqClient}, nil
 }
 
 func (c *Client) Close() error {

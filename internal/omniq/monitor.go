@@ -290,3 +290,39 @@ func (m *Monitor) GetJobs(ctx context.Context, queue string, status string, coun
 	}
 	return jobs, nil
 }
+
+func (m *Monitor) RetryJob(ctx context.Context, queue, jobID string) error {
+	return m.client.OmniqClient.RetryFailed(queue, jobID)
+}
+
+func (m *Monitor) RetryFailedBatch(ctx context.Context, queue string, jobIDs []string) (int, error) {
+	if len(jobIDs) == 0 {
+		return 0, nil
+	}
+	res, err := m.client.OmniqClient.RetryFailedBatch(queue, jobIDs)
+	if err != nil {
+		return 0, err
+	}
+	return len(res), nil
+}
+
+func (m *Monitor) RemoveJob(ctx context.Context, queue, jobID, lane string) error {
+	_, err := m.client.OmniqClient.RemoveJob(queue, jobID, lane)
+	return err
+}
+
+func (m *Monitor) RemoveJobsBatch(ctx context.Context, queue, status string, jobIDs []string) (int, error) {
+	if len(jobIDs) == 0 {
+		return 0, nil
+	}
+	lane := status
+	if lane == "waiting" {
+		lane = "wait"
+	}
+
+	res, err := m.client.OmniqClient.RemoveJobsBatch(queue, lane, jobIDs)
+	if err != nil {
+		return 0, err
+	}
+	return len(res), nil
+}

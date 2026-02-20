@@ -31,6 +31,7 @@ type App struct {
 	pages        *tview.Pages
 
 	currentStatus string
+	currentJobs   []omniq.Job
 
 	cancelLoop context.CancelFunc
 }
@@ -127,6 +128,30 @@ func (a *App) setupUI() {
 			a.updateData(context.Background())
 			return nil
 		}
+		if event.Rune() == 'r' || event.Rune() == 'R' {
+			if a.currentStatus == "failed" {
+				a.showRetryJobModal()
+			} else {
+				a.logView.SetText("[yellow]Retry only available for FAILED status")
+			}
+			return nil
+		}
+		if event.Rune() == 'b' || event.Rune() == 'B' {
+			if a.currentStatus == "failed" {
+				a.performBatchRetry()
+			} else {
+				a.logView.SetText("[yellow]Batch retry only available for FAILED status")
+			}
+			return nil
+		}
+		if event.Rune() == 'x' || event.Rune() == 'X' {
+			a.showRemoveJobModal()
+			return nil
+		}
+		if event.Rune() == 'd' || event.Rune() == 'D' {
+			a.performBatchRemove()
+			return nil
+		}
 		return event
 	})
 }
@@ -192,10 +217,17 @@ func (a *App) updateData(ctx context.Context) {
 [blue]w[white]: Waiting
 [blue]c[white]: Completed
 [blue]f[white]: Failed
+
+[yellow]Actions:[white]
+[blue]r[white]: Retry Single
+[blue]b[white]: Batch Retry (Fail)
+[blue]x[white]: Remove Single
+[blue]d[white]: Remove All (Status)
 `)
 
-	jobs, _ := a.monitor.GetJobs(ctx, a.currentQueue, a.currentStatus, 5)
-	a.jobsView.SetTitle(fmt.Sprintf(" Jobs (%s) ", strings.ToUpper(a.currentStatus)))
+	jobs, _ := a.monitor.GetJobs(ctx, a.currentQueue, a.currentStatus, 100)
+	a.currentJobs = jobs
+	a.jobsView.SetTitle(fmt.Sprintf(" Jobs (%s - showing last %d) ", strings.ToUpper(a.currentStatus), len(jobs)))
 
 	var sb strings.Builder
 	for _, j := range jobs {
@@ -214,6 +246,166 @@ func (a *App) updateData(ctx context.Context) {
 		sb.WriteString("[gray]--------------------------------------------------[white]\n")
 	}
 	a.jobsView.SetText(sb.String())
+}
+
+func (a *App) showRetryJobModal() {
+	if len(a.currentJobs) == 0 {
+		a.logView.SetText("[yellow]No jobs available to retry.")
+		return
+	}
+
+	list := tview.NewList()
+	list.SetTitle(" Select FAILED Job to Retry ").SetBorder(true)
+
+	for _, j := range a.currentJobs {
+		jobID := j.ID
+		list.AddItem(jobID, j.Payload, 0, func() {
+			go func() {
+				err := a.monitor.RetryJob(context.Background(), a.currentQueue, jobID)
+				a.tviewApp.QueueUpdateDraw(func() {
+					if err != nil {
+						a.logView.SetText(fmt.Sprintf("[red]Retry failed: %v", err))
+					} else {
+						a.logView.SetText(fmt.Sprintf("[green]Retried job: %s", jobID))
+						a.updateData(context.Background())
+					}
+				})
+			}()
+			a.pages.RemovePage("retry_job_selection")
+		})
+	}
+
+	list.AddItem("Cancel", "", 'c', func() {
+		a.pages.RemovePage("retry_job_selection")
+	})
+
+	modal := tview.NewFlex().
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(nil, 0, 1, false).
+			AddItem(list, 20, 1, true).
+			AddItem(nil, 0, 1, false), 60, 1, true).
+		AddItem(nil, 0, 1, false)
+
+	a.pages.AddPage("retry_job_selection", modal, true, true)
+}
+
+func (a *App) performBatchRetry() {
+	if len(a.currentJobs) == 0 {
+		a.logView.SetText("[yellow]No listed jobs to retry.")
+		return
+	}
+
+	ids := make([]string, len(a.currentJobs))
+	for i, j := range a.currentJobs {
+		ids[i] = j.ID
+	}
+
+	a.logView.SetText(fmt.Sprintf("[yellow]Retrying %d listed jobs...", len(ids)))
+	go func() {
+		ctx := context.Background()
+		n, err := a.monitor.RetryFailedBatch(ctx, a.currentQueue, ids)
+
+		a.tviewApp.QueueUpdateDraw(func() {
+			if err != nil {
+				a.logView.SetText(fmt.Sprintf("[red]Batch retry failed: %v", err))
+			} else {
+				a.logView.SetText(fmt.Sprintf("[green]Retried %d listed jobs", n))
+				a.updateData(context.Background())
+			}
+		})
+	}()
+}
+
+func (a *App) showRemoveJobModal() {
+	if len(a.currentJobs) == 0 {
+		a.logView.SetText(fmt.Sprintf("[yellow]No %s jobs available to remove.", a.currentStatus))
+		return
+	}
+
+	list := tview.NewList()
+	list.SetTitle(fmt.Sprintf(" Select %s Job to Remove ", strings.ToUpper(a.currentStatus))).SetBorder(true)
+
+	for _, j := range a.currentJobs {
+		jobID := j.ID
+		list.AddItem(jobID, j.Payload, 0, func() {
+			lane := a.currentStatus
+			if lane == "waiting" {
+				lane = "wait"
+			}
+			go func() {
+				err := a.monitor.RemoveJob(context.Background(), a.currentQueue, jobID, lane)
+				a.tviewApp.QueueUpdateDraw(func() {
+					if err != nil {
+						a.logView.SetText(fmt.Sprintf("[red]Remove failed: %v", err))
+					} else {
+						a.logView.SetText(fmt.Sprintf("[green]Removed job: %s from %s", jobID, a.currentStatus))
+						a.updateData(context.Background())
+					}
+				})
+			}()
+			a.pages.RemovePage("remove_job_selection")
+		})
+	}
+
+	list.AddItem("Cancel", "", 'c', func() {
+		a.pages.RemovePage("remove_job_selection")
+	})
+
+	modal := tview.NewFlex().
+		AddItem(nil, 0, 1, false).
+		AddItem(tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(nil, 0, 1, false).
+			AddItem(list, 20, 1, true).
+			AddItem(nil, 0, 1, false), 60, 1, true).
+		AddItem(nil, 0, 1, false)
+
+	a.pages.AddPage("remove_job_selection", modal, true, true)
+}
+
+func (a *App) performBatchRemove() {
+	if len(a.currentJobs) == 0 {
+		a.logView.SetText(fmt.Sprintf("[yellow]No listed %s jobs to remove.", a.currentStatus))
+		return
+	}
+
+	modal := tview.NewModal().
+		SetText(fmt.Sprintf("Are you sure you want to remove the %d LISTED %s jobs?", len(a.currentJobs), a.currentStatus)).
+		AddButtons([]string{"Yes", "No"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			if buttonLabel == "Yes" {
+				a.pages.RemovePage("confirm_remove_batch")
+				a.logView.SetText(fmt.Sprintf("[yellow]Removing %d listed jobs...", len(a.currentJobs)))
+
+				lane := a.currentStatus
+				if lane == "waiting" {
+					lane = "wait"
+				}
+
+				ids := make([]string, len(a.currentJobs))
+				for i, j := range a.currentJobs {
+					ids[i] = j.ID
+				}
+
+				go func() {
+					ctx := context.Background()
+					n, err := a.monitor.RemoveJobsBatch(ctx, a.currentQueue, a.currentStatus, ids)
+
+					a.tviewApp.QueueUpdateDraw(func() {
+						if err != nil {
+							a.logView.SetText(fmt.Sprintf("[red]Batch remove failed: %v", err))
+						} else {
+							a.logView.SetText(fmt.Sprintf("[green]Removed %d listed jobs from %s", n, a.currentStatus))
+							a.updateData(context.Background())
+						}
+					})
+				}()
+			} else {
+				a.pages.RemovePage("confirm_remove_batch")
+			}
+		})
+
+	a.pages.AddPage("confirm_remove_batch", modal, false, true)
 }
 
 func (a *App) showScanModal() {
