@@ -6,6 +6,8 @@ toolchain go1.24.13
 
 require (
 	github.com/gdamore/tcell/v2 v2.13.8
+	github.com/not-empty/omniq-go v1.5.0
+	github.com/pelletier/go-toml/v2 v2.2.4
 	github.com/redis/go-redis/v9 v9.17.3
 	github.com/rivo/tview v0.42.0
 	github.com/spf13/viper v1.21.0
@@ -18,7 +20,7 @@ require (
 	github.com/gdamore/encoding v1.0.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
-	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
+	github.com/not-empty/ulid-go-lib v1.0.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
