@@ -93,19 +93,36 @@ func (a *App) setupUI() {
 	a.tviewApp.SetRoot(a.pages, true)
 
 	a.tviewApp.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if _, ok := a.tviewApp.GetFocus().(*tview.InputField); ok {
-			return event
-		}
-
 		if event.Key() == tcell.KeyCtrlC {
 			a.Stop()
 			return nil
 		}
+
+		if _, ok := a.tviewApp.GetFocus().(*tview.InputField); ok {
+			return event
+		}
+		if _, ok := a.tviewApp.GetFocus().(*tview.TextArea); ok {
+			return event
+		}
+		if _, ok := a.tviewApp.GetFocus().(*tview.Form); ok {
+			return event
+		}
+		if _, ok := a.tviewApp.GetFocus().(*tview.List); ok {
+			return event
+		}
+		if _, ok := a.tviewApp.GetFocus().(*tview.Modal); ok {
+			return event
+		}
+
 		if event.Rune() == 's' || event.Rune() == 'S' {
 			a.showScanModal()
 			return nil
 		}
 		if event.Rune() == 'a' || event.Rune() == 'A' {
+			a.showAddJobModal()
+			return nil
+		}
+		if event.Rune() == 'q' || event.Rune() == 'Q' {
 			a.showManualEntryModal()
 			return nil
 		}
@@ -150,6 +167,10 @@ func (a *App) setupUI() {
 		}
 		if event.Rune() == 'd' || event.Rune() == 'D' {
 			a.performBatchRemove()
+			return nil
+		}
+		if event.Rune() == 'p' || event.Rune() == 'P' {
+			a.togglePauseQueue()
 			return nil
 		}
 		return event
@@ -209,8 +230,9 @@ func (a *App) updateData(ctx context.Context) {
 	a.statsView.SetText(statsText)
 
 	a.commandsView.SetText(`
+[yellow]Queues:[white]
+[blue]q[white]: Add Queue
 [blue]s[white]: Scan Queues
-[blue]a[white]: Add Job
 [blue]l[white]: List Queues
 
 [yellow]Jobs View:[white]
@@ -219,6 +241,8 @@ func (a *App) updateData(ctx context.Context) {
 [blue]f[white]: Failed
 
 [yellow]Actions:[white]
+[blue]a[white]: Add Job
+[blue]p[white]: Pause/Unpause Queue
 [blue]r[white]: Retry Single
 [blue]b[white]: Batch Retry (Fail)
 [blue]x[white]: Remove Single
@@ -454,7 +478,7 @@ func (a *App) performScan() {
 
 func (a *App) showQueueList(queues []string) {
 	list := tview.NewList()
-	list.SetTitle(" Select Queue ").SetBorder(true)
+	list.SetTitle(" Queues ").SetBorder(true)
 
 	for _, q := range queues {
 		list.AddItem(q, "", 0, func() {
@@ -492,4 +516,41 @@ func (a *App) showSavedQueues() {
 		return
 	}
 	a.showQueueList(queues)
+}
+
+func (a *App) togglePauseQueue() {
+	if strings.TrimSpace(a.currentQueue) == "" {
+		a.logView.SetText("[yellow]No queue selected.")
+		return
+	}
+
+	a.logView.SetText(fmt.Sprintf("[yellow]Toggling pause for queue: %s ...", a.currentQueue))
+	modal := tview.NewModal().
+		SetText(fmt.Sprintf("Do you want to pause/unpause the queue \"%s\"?", a.currentQueue)).
+		AddButtons([]string{"Yes", "No"}).
+		SetDoneFunc(func(buttonIndex int, buttonLabel string) {
+			a.pages.RemovePage("confirm_pause_queue")
+			if buttonLabel == "No" {
+				return
+			}
+
+			go func() {
+				paused, err := a.monitor.TogglePause(context.Background(), a.currentQueue)
+				a.tviewApp.QueueUpdateDraw(func() {
+					if err != nil {
+						a.logView.SetText(fmt.Sprintf("[red]Failed to toggle pause: %v", err))
+						return
+					}
+
+					action := "unpaused"
+					if paused {
+						action = "paused"
+					}
+					a.logView.SetText(fmt.Sprintf("[green]Queue %s: %s", action, a.currentQueue))
+					a.updateData(context.Background())
+				})
+			}()
+		})
+
+	a.pages.AddPage("confirm_pause_queue", modal, false, true)
 }
