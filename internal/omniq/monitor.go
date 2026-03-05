@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/not-empty/omniq-go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -31,6 +32,41 @@ type Monitor struct {
 
 func NewMonitor(client *Client) *Monitor {
 	return &Monitor{client: client}
+}
+
+func (m *Monitor) IsPaused(ctx context.Context, queue string) (bool, error) {
+	base := formatQueueName(queue)
+	kPaused := base + ":paused"
+	n, err := m.client.rdb.Exists(ctx, kPaused).Result()
+	if err != nil && err != redis.Nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+func (m *Monitor) PauseQueue(ctx context.Context, queue string) error {
+	base := formatQueueName(queue)
+	kPaused := base + ":paused"
+	return m.client.rdb.Set(ctx, kPaused, "1", 0).Err()
+}
+
+func (m *Monitor) UnpauseQueue(ctx context.Context, queue string) error {
+	base := formatQueueName(queue)
+	kPaused := base + ":paused"
+	return m.client.rdb.Del(ctx, kPaused).Err()
+}
+
+func (m *Monitor) TogglePause(ctx context.Context, queue string) (bool, error) {
+	paused, err := m.IsPaused(ctx, queue)
+	if err != nil {
+		return false, err
+	}
+
+	if paused {
+		return false, m.UnpauseQueue(ctx, queue)
+	}
+
+	return true, m.PauseQueue(ctx, queue)
 }
 
 func (m *Monitor) GetCounts(ctx context.Context, queue string) (Counts, error) {
@@ -325,4 +361,12 @@ func (m *Monitor) RemoveJobsBatch(ctx context.Context, queue, status string, job
 		return 0, err
 	}
 	return len(res), nil
+}
+
+func (m *Monitor) PublishJob(ctx context.Context, queue string, payload any) (string, error) {
+	q := strings.TrimSpace(queue)
+	return m.client.OmniqClient.Publish(omniq.PublishOpts{
+		Queue:   q,
+		Payload: payload,
+	})
 }
